@@ -54,14 +54,6 @@ A smart **Indoor Air Quality (IAQ) Monitoring System** built using Arduino UNO, 
 
 ---
 
-## 📷 Project Images
-
-| Setup | Output |
-|-------|---------|
-| ![Setup](assets/setup.jpg) | ![LCD Display](assets/output.jpg) |
-
----
-
 ## 🧰 Libraries Used
 - `DHT.h`
 - `LiquidCrystal.h`
@@ -81,7 +73,7 @@ Install via Arduino IDE → *Sketch* → *Include Library* → *Manage Libraries
 ## 📜 Author
 **Piyush Jain**  
 💡 Arduino | IoT | Embedded Systems Enthusiast  
-🔗 [LinkedIn](https://www.linkedin.com/in/) *(https://www.linkedin.com/in/piyushjain8350/)*
+🔗 [LinkedIn] *(https://www.linkedin.com/in/piyushjain8350/)*
 
 ---
 ### 🪶 License
