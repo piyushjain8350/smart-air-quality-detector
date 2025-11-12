@@ -1,0 +1,158 @@
+/* Indoor Air-Quality Monitor + Fan & Buzzer
+   Parts: UNO, 16x2 LCD, DHT11 (3-pin), MQ "Flying-Fish", 5V relay module, fan, buzzer
+   Notes:
+   - MQ sensors need a warm-up. We take a baseline after WARMUP_SECONDS.
+   - Thresholds are RELATIVE to that baseline. Tune them for your room.
+*/
+
+#include <DHT.h>
+#include <LiquidCrystal.h>
+
+// ---------- Pins ----------
+#define DHTPIN    2
+#define DHTTYPE   DHT11
+#define MQ_PIN    A0
+#define RELAY_PIN 5
+#define BUZZER_PIN 6
+
+// LCD in 4-bit mode: RS,E,D4,D5,D6,D7
+LiquidCrystal lcd(7, 8, 9, 10, 11, 12);
+DHT dht(DHTPIN, DHTTYPE);
+
+// ---------- Config ----------
+const unsigned long WARMUP_SECONDS = 10;     // for real use, increase to 1800 (30 min)
+const int AVG_SAMPLES = 10;                  // moving average window
+// Category thresholds (units = relative ADC counts above baseline)
+int TH_MODERATE   = 30;
+int TH_USG        = 120; // Unhealthy for Sensitive Groups
+int TH_UNHEALTHY  = 22;
+int TH_VERYUNH    = 35;
+
+// ---------- State ----------
+int avgBuf[AVG_SAMPLES];
+long avgSum = 0;
+int avgIdx = 0;
+int baseline = -1;
+bool fanOn = false;
+bool warmupDone = false;
+unsigned long tStart;
+
+// ---------- Helpers ----------
+String categoryFrom(int score) {
+  if (score < TH_MODERATE)   return "Good";
+  if (score < TH_USG)        return "Moderate";
+  if (score < TH_UNHEALTHY)  return "Unhlth*";      // Unhealthy for Sensitive
+  if (score < TH_VERYUNH)    return "Unhealthy";
+  return "VeryUnhlthy";
+}
+
+void setFan(bool on) {
+  fanOn = on;
+  digitalWrite(RELAY_PIN, on ? HIGH : LOW);
+}
+
+void alarm(bool on) {
+  if (on) tone(BUZZER_PIN, 2000);  // 2 kHz
+  else    noTone(BUZZER_PIN);
+}
+
+void printCentered(const String& s, uint8_t row) {
+  lcd.setCursor(0, row);
+  String pad = "                ";
+  lcd.print(pad); // clear line
+  int start = max(0, (16 - (int)s.length()) / 2);
+  lcd.setCursor(start, row);
+  lcd.print(s.substring(0, 16));
+}
+
+// ---------- Setup ----------
+void setup() {
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  setFan(false);
+  alarm(false);
+
+  lcd.begin(16, 2);
+  printCentered("IAQ Monitor", 0);
+  printCentered("Warming sensor", 1);
+
+  dht.begin();
+
+  // init moving average with first readings
+  delay(500);
+  for (int i = 0; i < AVG_SAMPLES; i++) {
+    avgBuf[i] = analogRead(MQ_PIN);
+    avgSum += avgBuf[i];
+    delay(10);
+  }
+  tStart = millis();
+
+  Serial.begin(9600);
+  Serial.println(F("IAQ Monitor starting..."));
+}
+
+// ---------- Main Loop ----------
+void loop() {
+  // Update moving average for MQ analog
+  avgSum -= avgBuf[avgIdx];
+  avgBuf[avgIdx] = analogRead(MQ_PIN);
+  avgSum += avgBuf[avgIdx];
+  avgIdx = (avgIdx + 1) % AVG_SAMPLES;
+  int mqAvg = avgSum / AVG_SAMPLES;
+
+  // Warm-up and baseline capture
+  if (!warmupDone && millis() - tStart >= WARMUP_SECONDS * 1000UL) {
+    baseline = mqAvg;
+    warmupDone = true;
+    lcd.clear();
+  }
+
+  // Read DHT (may return NaN occasionally)
+  float h = dht.readHumidity();
+  float t = dht.readTemperature(); // Celsius
+  if (isnan(h)) h = 0;
+  if (isnan(t)) t = 0;
+
+  int relative = (baseline > 0) ? (mqAvg - baseline) : 0;
+  if (relative < 0) relative = 0;
+  String cat = warmupDone ? categoryFrom(relative) : "Warming";
+
+  // Control logic
+  bool shouldFan =
+      warmupDone && (relative >= TH_UNHEALTHY);          // turn on at Unhealthy+
+  bool shouldAlarm =
+      warmupDone && (relative >= TH_VERYUNH);            // buzzer at Very Unhealthy
+
+  setFan(shouldFan);
+  alarm(shouldAlarm);
+
+  // ----- LCD -----
+  if (!warmupDone) {
+    printCentered("Warming... " + String((millis()-tStart)/1000) + "s", 0);
+    printCentered("Keep ventilated", 1);
+  } else {
+    // Line 1: IAQ value + category
+    lcd.setCursor(0, 0);
+    char line1[17];
+    snprintf(line1, sizeof(line1), "IAQ:%4d %-10s", relative, cat.c_str());
+    lcd.print(line1);
+
+    // Line 2: Temp, Humid, Fan flag
+    lcd.setCursor(0, 1);
+    char line2[17];
+    snprintf(line2, sizeof(line2), "T:%2dC H:%2d%% %c",
+             (int)t, (int)h, fanOn ? 'F' : ' ');
+    lcd.print(line2);
+  }
+
+  // ----- Serial debug plot -----
+  Serial.print("MQavg:"); Serial.print(mqAvg);
+  Serial.print(", baseline:"); Serial.print(baseline);
+  Serial.print(", rel:"); Serial.print(relative);
+  Serial.print(", cat:"); Serial.print(cat);
+  Serial.print(", T:"); Serial.print(t);
+  Serial.print(", H:"); Serial.print(h);
+  Serial.print(", Fan:"); Serial.println(fanOn ? 1 : 0);
+
+  delay(500);  // ~2 Hz update
+}
